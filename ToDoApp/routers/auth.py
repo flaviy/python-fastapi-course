@@ -1,15 +1,18 @@
+import sys
 from datetime import timedelta, datetime, timezone
 from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from starlette import status
+from fastapi.templating import Jinja2Templates
+from starlette.responses import HTMLResponse
+
 from ..db_session import get_db
 from ..requests.create_user_request import CreateUserRequest
 from ..models import Users
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
-from jose import jwt
+from jose import jwt, JWTError
 
 from ..token_response import TokenResponse
 
@@ -27,8 +30,19 @@ ALGORITHM = 'HS256'
 
 router = APIRouter()
 db_dependency = Annotated[Session, Depends(get_db)]
+templates = Jinja2Templates(directory="ToDoApp/templates")
+
+### Pages ###
+@router.get("/login-page", response_class=HTMLResponse)
+def render_login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+@router.get("/register-page", response_class=HTMLResponse)
+def render_register_page(request: Request):
+    return templates.TemplateResponse("register.html", {"request": request, "roles": ["admin", "user"]})
 
 
+### Endpoints ###
 def authenticate_user(db: Session, username: str, password: str):
     user = db.query(Users).filter(Users.username == username).first()
     if not user:
@@ -79,11 +93,12 @@ async def login_for_access_token(db: db_dependency, form_data: Annotated[OAuth2P
 async def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        sys.stdout.write(f"Payload: {payload}\n")
         username: str = payload.get("sub")
         user_id: int = payload.get("id")
         role: str = payload.get("role")
         if username is None or user_id is None:
             raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-    except jwt.JWTError:
+    except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     return {'username': username, 'user_id': user_id, 'role': role}

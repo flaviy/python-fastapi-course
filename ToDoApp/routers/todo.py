@@ -1,6 +1,10 @@
+import sys
+
 from fastapi import Depends, HTTPException, Path, APIRouter
 from sqlalchemy.orm import Session
 from starlette import status
+from starlette.requests import Request
+from starlette.responses import RedirectResponse, HTMLResponse
 
 from .. import models
 from ..models import ToDoModel
@@ -8,6 +12,8 @@ from ..database import engine
 from typing import Annotated
 from ..requests.todo_request import TodoRequest
 from ..db_session import get_db
+from fastapi.templating import Jinja2Templates
+
 # the dot This ensures that the get_current_user function is correctly imported from the
 # auth module located in the same directory.
 # If you don't add the dot in the import statement,
@@ -76,7 +82,53 @@ This allows FastAPI to manage dependencies and inject the required objects into 
 db_dependency = Annotated[Session, Depends(get_db)]
 # user_dependency: dict = Depends(get_current_user)
 user_dependency = Annotated[dict, Depends(get_current_user)]
+templates = Jinja2Templates(directory="ToDoApp/templates")
 
+
+### pages ###
+@router.get("/render-todo-page", response_class=HTMLResponse)
+async def render_todo_page(request: Request, db: db_dependency):
+    try:
+        user = await get_current_user(request.cookies.get("access_token"))
+        if user is None:
+            return redirect_non_logged(request)
+    except Exception as e:
+        return redirect_non_logged(request)
+    all_user_todos = db.query(ToDoModel).filter(ToDoModel.owner_id == user.get("user_id")).all()
+    return templates.TemplateResponse("todos.html", {"request": request, "todos": all_user_todos, "user": user})
+
+@router.get("/add-todo-page", response_class=HTMLResponse)
+async  def add_todo_page(request: Request):
+    try:
+        user = await get_current_user(request.cookies.get("access_token"))
+        if user is None:
+            return redirect_non_logged(request)
+    except Exception as e:
+        return redirect_non_logged(request)
+    return templates.TemplateResponse("add-todo.html", {"request": request, "user": user})
+
+@router.get("/edit-todo-page/{todo_id}", response_class=HTMLResponse)
+async def edit_todo_page(request: Request, db: db_dependency, todo_id: int = Path(gt=0)):
+    try:
+        user = await get_current_user(request.cookies.get("access_token"))
+        if user is None:
+            return redirect_non_logged(request)
+    except Exception as e:
+        return redirect_non_logged(request)
+    todo = db.query(ToDoModel).filter(ToDoModel.id == todo_id).first()
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return templates.TemplateResponse("edit-todo.html", {"request": request, "user": user, "todo": todo})
+
+
+def redirect_non_logged(request):
+   # request.session['flash'] = 'You need to log in to access this page.'
+    redirect_response = RedirectResponse(url="/auth/login-page", status_code=302)
+    redirect_response.delete_cookie(key="access_token")
+    return redirect_response
+
+
+### endpoints ###
 
 @router.get("/")
 # async def read_all(db: Annotated[Session, Depends(get_db)]):
@@ -86,7 +138,7 @@ async def read_all(db: db_dependency, user: user_dependency):
     return db.query(ToDoModel).filter(ToDoModel.owner_id == user.get("user_id")).all()
 
 
-@router.get("/todos/{todo_id}", status_code=status.HTTP_200_OK)
+@router.get("/todo/{todo_id}", status_code=status.HTTP_200_OK)
 async def read_todo(db: db_dependency, user: user_dependency, todo_id: int = Path(gt=0)):
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -99,7 +151,7 @@ async def read_todo(db: db_dependency, user: user_dependency, todo_id: int = Pat
     raise HTTPException(status_code=404, detail="Todo not found")
 
 
-@router.post("/todos/create", status_code=status.HTTP_201_CREATED)
+@router.post("/create", status_code=status.HTTP_201_CREATED)
 async def create_todo(todo_request: TodoRequest, db: db_dependency,
                       user: user_dependency
                       ):
@@ -111,7 +163,7 @@ async def create_todo(todo_request: TodoRequest, db: db_dependency,
     return {"message": "Todo created successfully", "status": 201}
 
 
-@router.put("/todos/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/todo/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def update_todo(user: user_dependency, db: db_dependency, todo_request: TodoRequest, todo_id: int = Path(gt=0)):
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -128,7 +180,7 @@ async def update_todo(user: user_dependency, db: db_dependency, todo_request: To
         raise HTTPException(status_code=404, detail="Todo not found")
 
 
-@router.delete("/todos/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/todo/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_todo(user: user_dependency, db: db_dependency, todo_id: int = Path(gt=0)):
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
